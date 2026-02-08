@@ -1,85 +1,132 @@
-# x-research
+# x-research-skill
 
-Sometimes the thing you're looking for is on Twitter, not Google.
+X/Twitter research skill for [Claude Code](https://code.claude.com) and [OpenClaw](https://openclaw.ai). Agentic search, thread following, deep-dives, sourced briefings.
 
-New library just dropped? Devs are posting first impressions on X hours before blog posts exist. API broken? Someone already tweeted the workaround. Cultural moment happening? X has the raw takes while Google has SEO spam from three days later.
+## What it does
 
-This is a skill for [Claude Code](https://claude.ai/claude-code) and [OpenClaw](https://github.com/claw-project/openclaw) that gives your agent the ability to search X — modeled after how Claude Code's built-in research agent works for web search. It decomposes your question into multiple search queries, iterates, follows threads, reads linked content, and comes back with a sourced briefing.
+Turns Claude into an X/Twitter research agent. Ask questions like "what are people saying about BNKR" or "search X for Opus 4.6 trading" and get sourced briefings with engagement data, thread context, and linked resources.
 
-## How it works
+## v2: CLI Tooling (New)
 
-You ask something like:
+v2 adds `x-search.ts` — a Bun CLI that wraps the X API, so Claude doesn't need to assemble raw curl commands. Same research loop, much faster execution.
 
-> "what are devs saying about the new X API pay-per-use pricing?"
+**What changed:**
+- `x-search.ts` handles search, profiles, threads, single tweet lookups
+- 15-minute result cache (saves API costs on repeated queries)
+- Built-in engagement sorting and filtering (`--sort likes`, `--min-likes 50`)
+- Watchlist for monitoring accounts
+- Auto noise filtering (`-is:retweet` added by default)
+- Clean Telegram + markdown formatters
 
-The skill runs an agentic loop:
-1. Breaks your question into 3-5 targeted queries from different angles (core topic, expert voices, pain points, linked resources)
-2. Searches X via the API, surfaces the highest-signal tweets
-3. Follows interesting threads for full context
-4. Reads linked GitHub repos, blog posts, docs — not just the tweets
-5. Synthesizes everything by theme with tweet links as sources
-6. Saves to a markdown file so you can reference it later
+**What didn't change:**
+- Still uses the same agentic research loop (decompose → search → refine → synthesize)
+- Still read-only (never posts)
+- Still works as a pure prompt skill if you don't want the CLI
 
-## Example
+## Install
 
-Query: *"What are the best new OpenClaw skills?"*
-
-6 search queries, ~150 tweets scanned, 4 GitHub repos deep-dived. Output:
-
-```
-### Circle Wallet (304 likes, 140K impressions)
-Agent-controlled USDC wallets. Already in use at Moltbook hackathon.
-- @jerallaire (Circle CEO) — Tweet: https://x.com/jerallaire/status/2019970318581002511
-- Skill: https://clawhub.ai/eltontay/circle-wallet
-
-### OpenClaw-Sec (30 likes, 4.4K impressions)
-Real-time security — 6 parallel detection modules in under 50ms.
-- @orbuloeth — Tweet: https://x.com/orbuloeth/status/2018037658816266577
-- Skill: https://github.com/PaoloRollo/openclaw-sec
-- Deep dive: prompt injection detection, command validation, SSRF blocking,
-  secret scanning. YAML config, SQLite analytics.
+### Claude Code
+```bash
+# From your project
+mkdir -p .claude/skills
+cd .claude/skills
+git clone https://github.com/rohunvora/x-research-skill.git x-research
 ```
 
-25+ skills surfaced with links.
+### OpenClaw
+```bash
+# From your workspace
+mkdir -p skills
+cd skills
+git clone https://github.com/rohunvora/x-research-skill.git x-research
+```
 
 ## Setup
 
-1. Get an X API bearer token at [developer.x.com](https://developer.x.com)
-2. Set the env var:
+1. **X API Bearer Token** — Get one from the [X Developer Portal](https://developer.x.com)
+2. **Set the env var:**
    ```bash
-   export X_BEARER_TOKEN="your_token"
+   export X_BEARER_TOKEN="your-token-here"
    ```
-
-## Install — Claude Code
-
-```bash
-mkdir -p ~/.claude/skills/x-research/references
-curl -sL https://raw.githubusercontent.com/rohunvora/x-research-skill/main/SKILL.md \
-  -o ~/.claude/skills/x-research/SKILL.md
-curl -sL https://raw.githubusercontent.com/rohunvora/x-research-skill/main/references/x-api.md \
-  -o ~/.claude/skills/x-research/references/x-api.md
-```
-
-## Install — OpenClaw
-
-Tell your agent:
-
-> Install a new skill called "x-research" from https://github.com/rohunvora/x-research-skill — read the SKILL.md and references/x-api.md and set them up. Make sure X_BEARER_TOKEN is in the environment.
+   Or save it to `~/.config/env/global.env`:
+   ```
+   X_BEARER_TOKEN=your-token-here
+   ```
+3. **Install Bun** (for CLI tooling): https://bun.sh
 
 ## Usage
 
-Just talk to it:
+### Natural language (just talk to Claude)
+- "What are people saying about Opus 4.6?"
+- "Search X for OpenClaw skills"
+- "What's CT saying about BNKR today?"
+- "Check what @frankdegods posted recently"
 
-- "search x for what devs think about Bun 2.0"
-- "what are people saying about the Vercel outage?"
-- "x research: reactions to the new OpenAI model"
-- "check twitter for Claude Code tips"
+### CLI commands
+```bash
+cd skills/x-research
+
+# Search (sorted by likes, auto-filters retweets)
+bun run x-search.ts search "your query" --sort likes --limit 10
+
+# Profile — recent tweets from a user
+bun run x-search.ts profile username
+
+# Thread — full conversation
+bun run x-search.ts thread TWEET_ID
+
+# Single tweet
+bun run x-search.ts tweet TWEET_ID
+
+# Watchlist
+bun run x-search.ts watchlist add username "optional note"
+bun run x-search.ts watchlist check
+
+# Save research to file
+bun run x-search.ts search "query" --save --markdown
+```
+
+### Search options
+```
+--sort likes|impressions|retweets|recent   (default: likes)
+  --since 1h|3h|12h|1d|7d     Time filter (default: last 7 days)
+--min-likes N              Filter minimum likes
+--min-impressions N        Filter minimum impressions
+--pages N                  Pages to fetch, 1-5 (default: 1, 100 tweets/page)
+--limit N                  Results to display (default: 15)
+--no-replies               Exclude replies
+--save                     Save to ~/clawd/drafts/
+--json                     Raw JSON output
+--markdown                 Markdown research doc
+```
+
+## File structure
+
+```
+x-research/
+├── SKILL.md              # Skill instructions (Claude reads this)
+├── x-search.ts           # CLI entry point
+├── lib/
+│   ├── api.ts            # X API wrapper
+│   ├── cache.ts          # File-based cache (15min TTL)
+│   └── format.ts         # Telegram + markdown formatters
+├── data/
+│   ├── watchlist.json    # Accounts to monitor (create your own)
+│   └── cache/            # Auto-managed
+└── references/
+    └── x-api.md          # X API endpoint reference
+```
+
+## API costs
+
+X API charges ~$0.005/tweet read. A typical research session (5 queries × 100 tweets) ≈ $2.50. The cache avoids repeat charges for identical queries within 15 minutes.
 
 ## Limitations
 
-- **7-day window** — recent search only. Full archive needs the $5K/mo Pro tier.
-- **Keyword search only** — no semantic/meaning-based search. The skill compensates by running multiple queries from different angles.
-- **No `min_likes` filter** — engagement filtering happens after results come back, not at query time.
+- Search covers last 7 days only (X API restriction on Basic tier)
+- Read-only — never posts or interacts
+- Requires X API Basic tier ($200/mo) or higher
+- `min_likes` / `min_retweets` operators unavailable on Basic tier (filtered post-hoc instead)
 
 ## Star History
 
