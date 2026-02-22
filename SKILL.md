@@ -9,14 +9,14 @@ description: >
   "/x-research", (2) user is working on something where recent X discourse would provide
   useful context (new library releases, API changes, product launches, cultural events,
   industry drama), (3) user wants to find what devs/experts/community thinks about a topic.
-  NOT for: posting tweets or account management. Note: currently uses recent search (last 7 days). Full-archive search is available on the same pay-per-use X API plan but not yet implemented in this skill.
+  NOT for: posting tweets or account management. Note: uses RapidAPI (twitter-api45) instead of official X API — no bearer token needed, just a RapidAPI key.
 ---
 
 # X Research
 
 General-purpose agentic research over X/Twitter. Decompose any research question into targeted searches, iteratively refine, follow threads, deep-dive linked content, and synthesize into a sourced briefing.
 
-For X API details (endpoints, operators, response format): read `references/x-api.md`.
+Uses RapidAPI (twitter-api45) as backend. Set `RAPIDAPI_KEY` env var.
 
 ## CLI Tool
 
@@ -24,7 +24,7 @@ All commands run from this skill directory:
 
 ```bash
 cd ~/clawd/skills/x-research
-source ~/.config/env/global.env
+export RAPIDAPI_KEY="your-key-here"  # or set in ~/.config/env/global.env
 ```
 
 ### Search

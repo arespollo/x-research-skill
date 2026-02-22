@@ -1,16 +1,16 @@
 /**
- * X API wrapper — search, threads, profiles, single tweets.
- * Uses Bearer token from env: X_BEARER_TOKEN
+ * X API wrapper — via RapidAPI (twitter-api45).
+ * Uses env: RAPIDAPI_KEY
  */
 
 import { readFileSync } from "fs";
 
-const BASE = "https://api.x.com/2";
-const RATE_DELAY_MS = 350; // stay under 450 req/15min
+const RAPIDAPI_HOST = "twitter-api45.p.rapidapi.com";
+const BASE = `https://${RAPIDAPI_HOST}`;
+const RATE_DELAY_MS = 500;
 
-function getToken(): string {
-  // Try env first
-  if (process.env.X_BEARER_TOKEN) return process.env.X_BEARER_TOKEN;
+function getKey(): string {
+  if (process.env.RAPIDAPI_KEY) return process.env.RAPIDAPI_KEY;
 
   // Try global.env
   try {
@@ -18,12 +18,12 @@ function getToken(): string {
       `${process.env.HOME}/.config/env/global.env`,
       "utf-8"
     );
-    const match = envFile.match(/X_BEARER_TOKEN=["']?([^"'\n]+)/);
+    const match = envFile.match(/RAPIDAPI_KEY=["']?([^"'\n]+)/);
     if (match) return match[1];
   } catch {}
 
   throw new Error(
-    "X_BEARER_TOKEN not found in env or ~/.config/env/global.env"
+    "RAPIDAPI_KEY not found in env or ~/.config/env/global.env"
   );
 }
 
@@ -53,116 +53,85 @@ export interface Tweet {
   tweet_url: string;
 }
 
-interface RawResponse {
-  data?: any[];
-  includes?: { users?: any[] };
-  meta?: { next_token?: string; result_count?: number };
-  errors?: any[];
-  title?: string;
-  detail?: string;
-  status?: number;
-}
-
-function parseTweets(raw: RawResponse): Tweet[] {
-  if (!raw.data) return [];
-  const users: Record<string, any> = {};
-  for (const u of raw.includes?.users || []) {
-    users[u.id] = u;
-  }
-
-  return raw.data.map((t: any) => {
-    const u = users[t.author_id] || {};
-    const m = t.public_metrics || {};
-    return {
-      id: t.id,
-      text: t.text,
-      author_id: t.author_id,
-      username: u.username || "?",
-      name: u.name || "?",
-      created_at: t.created_at,
-      conversation_id: t.conversation_id,
-      metrics: {
-        likes: m.like_count || 0,
-        retweets: m.retweet_count || 0,
-        replies: m.reply_count || 0,
-        quotes: m.quote_count || 0,
-        impressions: m.impression_count || 0,
-        bookmarks: m.bookmark_count || 0,
-      },
-      urls: (t.entities?.urls || [])
-        .map((u: any) => u.expanded_url)
-        .filter(Boolean),
-      mentions: (t.entities?.mentions || [])
-        .map((m: any) => m.username)
-        .filter(Boolean),
-      hashtags: (t.entities?.hashtags || [])
-        .map((h: any) => h.tag)
-        .filter(Boolean),
-      tweet_url: `https://x.com/${u.username || "?"}/status/${t.id}`,
-    };
-  });
-}
-
-const FIELDS =
-  "tweet.fields=created_at,public_metrics,author_id,conversation_id,entities&expansions=author_id&user.fields=username,name,public_metrics";
-
-/**
- * Parse a "since" value into an ISO 8601 timestamp.
- * Accepts: "1h", "2h", "6h", "12h", "1d", "2d", "3d", "7d"
- * Or a raw ISO 8601 string.
- */
-function parseSince(since: string): string | null {
-  // Check for shorthand like "1h", "3h", "1d"
-  const match = since.match(/^(\d+)(m|h|d)$/);
-  if (match) {
-    const num = parseInt(match[1]);
-    const unit = match[2];
-    const ms =
-      unit === "m" ? num * 60_000 :
-      unit === "h" ? num * 3_600_000 :
-      num * 86_400_000;
-    const startTime = new Date(Date.now() - ms);
-    return startTime.toISOString();
-  }
-
-  // Check if it's already ISO 8601
-  if (since.includes("T") || since.includes("-")) {
-    try {
-      return new Date(since).toISOString();
-    } catch {
-      return null;
-    }
-  }
-
-  return null;
-}
-
-async function apiGet(url: string): Promise<RawResponse> {
-  const token = getToken();
+async function rapidGet(url: string): Promise<any> {
+  const key = getKey();
   const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: {
+      "x-rapidapi-host": RAPIDAPI_HOST,
+      "x-rapidapi-key": key,
+    },
   });
 
   if (res.status === 429) {
-    const reset = res.headers.get("x-rate-limit-reset");
-    const waitSec = reset
-      ? Math.max(parseInt(reset) - Math.floor(Date.now() / 1000), 1)
-      : 60;
-    throw new Error(`Rate limited. Resets in ${waitSec}s`);
+    throw new Error("RapidAPI rate limited. Try again later.");
   }
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`X API ${res.status}: ${body.slice(0, 200)}`);
+    throw new Error(`RapidAPI ${res.status}: ${body.slice(0, 200)}`);
   }
 
   return res.json();
 }
 
 /**
- * Search recent tweets (last 7 days).
- * Note: Full-archive search (/2/tweets/search/all) is available on the same
- * pay-per-use plan (no enterprise required) but not yet implemented here.
+ * Convert a RapidAPI timeline tweet object to our Tweet interface.
+ */
+function parseTimelineTweet(t: any): Tweet {
+  const username = t.screen_name || t.author?.screen_name || "?";
+  const name = t.user_info?.name || t.author?.name || username;
+  const views = parseInt(t.views || "0") || 0;
+
+  return {
+    id: t.tweet_id || t.id || "",
+    text: t.text || "",
+    author_id: t.user_info?.rest_id || t.author?.rest_id || "",
+    username,
+    name,
+    created_at: t.created_at || "",
+    conversation_id: t.conversation_id || t.tweet_id || t.id || "",
+    metrics: {
+      likes: t.favorites || t.likes || 0,
+      retweets: t.retweets || 0,
+      replies: t.replies || 0,
+      quotes: t.quotes || 0,
+      impressions: views,
+      bookmarks: t.bookmarks || 0,
+    },
+    urls: extractUrls(t),
+    mentions: extractMentions(t),
+    hashtags: extractHashtags(t),
+    tweet_url: `https://x.com/${username}/status/${t.tweet_id || t.id || ""}`,
+  };
+}
+
+function extractUrls(t: any): string[] {
+  const urls: string[] = [];
+  for (const u of t.entities?.urls || []) {
+    if (u.expanded_url) urls.push(u.expanded_url);
+  }
+  return urls;
+}
+
+function extractMentions(t: any): string[] {
+  const mentions: string[] = [];
+  for (const m of t.entities?.user_mentions || []) {
+    if (m.screen_name) mentions.push(m.screen_name);
+  }
+  return mentions;
+}
+
+function extractHashtags(t: any): string[] {
+  const tags: string[] = [];
+  for (const h of t.entities?.hashtags || []) {
+    if (h.text || h.tag) tags.push(h.text || h.tag);
+  }
+  return tags;
+}
+
+/**
+ * Search tweets via RapidAPI.
+ * search_type: Top, Latest, Photos, Videos
  */
 export async function search(
   query: string,
@@ -170,42 +139,72 @@ export async function search(
     maxResults?: number;
     pages?: number;
     sortOrder?: "relevancy" | "recency";
-    since?: string; // ISO 8601 timestamp or shorthand like "1h", "3h", "1d"
+    since?: string;
   } = {}
 ): Promise<Tweet[]> {
-  const maxResults = Math.max(Math.min(opts.maxResults || 100, 100), 10);
   const pages = opts.pages || 1;
-  const sort = opts.sortOrder || "relevancy";
+  const searchType = opts.sortOrder === "recency" ? "Latest" : "Top";
   const encoded = encodeURIComponent(query);
 
-  // Build time filter
-  let timeFilter = "";
-  if (opts.since) {
-    const startTime = parseSince(opts.since);
-    if (startTime) {
-      timeFilter = `&start_time=${startTime}`;
-    }
-  }
-
   let allTweets: Tweet[] = [];
-  let nextToken: string | undefined;
+  let cursor: string | undefined;
 
   for (let page = 0; page < pages; page++) {
-    const pagination = nextToken
-      ? `&pagination_token=${nextToken}`
-      : "";
-    const url = `${BASE}/tweets/search/recent?query=${encoded}&max_results=${maxResults}&${FIELDS}&sort_order=${sort}${timeFilter}${pagination}`;
+    const cursorParam = cursor ? `&cursor=${encodeURIComponent(cursor)}` : "";
+    const url = `${BASE}/search.php?query=${encoded}&search_type=${searchType}${cursorParam}`;
 
-    const raw = await apiGet(url);
-    const tweets = parseTweets(raw);
-    allTweets.push(...tweets);
+    const raw = await rapidGet(url);
 
-    nextToken = raw.meta?.next_token;
-    if (!nextToken) break;
+    if (raw.timeline && Array.isArray(raw.timeline)) {
+      for (const item of raw.timeline) {
+        if (item.type === "tweet") {
+          allTweets.push(parseTimelineTweet(item));
+        }
+      }
+    }
+
+    cursor = raw.next_cursor;
+    if (!cursor) break;
     if (page < pages - 1) await sleep(RATE_DELAY_MS);
   }
 
+  // Apply since filter client-side if provided
+  if (opts.since) {
+    const sinceMs = parseSinceMs(opts.since);
+    if (sinceMs) {
+      const cutoff = Date.now() - sinceMs;
+      allTweets = allTweets.filter(
+        (t) => new Date(t.created_at).getTime() >= cutoff
+      );
+    }
+  }
+
   return allTweets;
+}
+
+/**
+ * Parse since value to milliseconds.
+ */
+function parseSinceMs(since: string): number | null {
+  const match = since.match(/^(\d+)(m|h|d)$/);
+  if (match) {
+    const num = parseInt(match[1]);
+    const unit = match[2];
+    return unit === "m" ? num * 60_000 : unit === "h" ? num * 3_600_000 : num * 86_400_000;
+  }
+  return null;
+}
+
+/**
+ * Fetch a single tweet by ID.
+ */
+export async function getTweet(tweetId: string): Promise<Tweet | null> {
+  const url = `${BASE}/tweet.php?id=${tweetId}`;
+  const raw = await rapidGet(url);
+
+  if (!raw || raw.status === "error") return null;
+
+  return parseTimelineTweet(raw);
 }
 
 /**
@@ -215,73 +214,62 @@ export async function thread(
   conversationId: string,
   opts: { pages?: number } = {}
 ): Promise<Tweet[]> {
+  // Get the root tweet first
+  const tweets: Tweet[] = [];
+  const root = await getTweet(conversationId);
+  if (root) tweets.push(root);
+
+  // Search for conversation replies
+  await sleep(RATE_DELAY_MS);
   const query = `conversation_id:${conversationId}`;
-  const tweets = await search(query, {
+  const replies = await search(query, {
     pages: opts.pages || 2,
     sortOrder: "recency",
   });
+  tweets.push(...replies);
 
-  // Also fetch the root tweet
-  try {
-    const rootUrl = `${BASE}/tweets/${conversationId}?${FIELDS}`;
-    const raw = await apiGet(rootUrl);
-    const rootTweets = parseTweets({ ...raw, data: raw.data ? [raw.data] : (raw as any).id ? [raw] : [] });
-    // Fix: single tweet lookup returns tweet at top level
-    if ((raw as any).id) {
-      // raw is the tweet itself — need to re-fetch with proper structure
-    }
-    if (rootTweets.length > 0) {
-      tweets.unshift(...rootTweets);
-    }
-  } catch {
-    // Root tweet might be deleted
-  }
-
-  return tweets;
+  return dedupe(tweets);
 }
 
 /**
- * Get recent tweets from a specific user.
+ * Get user profile info + recent tweets.
  */
 export async function profile(
   username: string,
   opts: { count?: number; includeReplies?: boolean } = {}
 ): Promise<{ user: any; tweets: Tweet[] }> {
-  // First, look up user ID
-  const userUrl = `${BASE}/users/by/username/${username}?user.fields=public_metrics,description,created_at`;
-  const userData = await apiGet(userUrl);
-  
-  if (!userData.data) {
+  // Fetch user info
+  const userUrl = `${BASE}/screenname.php?screenname=${encodeURIComponent(username)}`;
+  const userData = await rapidGet(userUrl);
+
+  if (!userData || userData.status === "error") {
     throw new Error(`User @${username} not found`);
   }
 
-  const user = (userData as any).data;
+  // Normalize user object to match expected format
+  const user = {
+    username: userData.profile || username,
+    name: userData.name || username,
+    description: userData.desc || "",
+    created_at: userData.created_at || "",
+    public_metrics: {
+      followers_count: userData.sub_count || 0,
+      following_count: userData.friends || 0,
+      tweet_count: userData.statuses_count || 0,
+    },
+  };
+
   await sleep(RATE_DELAY_MS);
 
-  // Build search query
+  // Fetch recent tweets via search
   const replyFilter = opts.includeReplies ? "" : " -is:reply";
   const query = `from:${username} -is:retweet${replyFilter}`;
   const tweets = await search(query, {
-    maxResults: Math.min(opts.count || 20, 100),
+    maxResults: opts.count || 20,
     sortOrder: "recency",
   });
 
   return { user, tweets };
-}
-
-/**
- * Fetch a single tweet by ID.
- */
-export async function getTweet(tweetId: string): Promise<Tweet | null> {
-  const url = `${BASE}/tweets/${tweetId}?${FIELDS}`;
-  const raw = await apiGet(url);
-
-  // Single tweet returns { data: {...}, includes: {...} }
-  if (raw.data && !Array.isArray(raw.data)) {
-    const parsed = parseTweets({ ...raw, data: [raw.data] });
-    return parsed[0] || null;
-  }
-  return null;
 }
 
 /**
