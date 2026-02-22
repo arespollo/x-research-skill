@@ -5,12 +5,11 @@
 
 import { readFileSync } from "fs";
 
-const RAPIDAPI_HOST = "twitter-api45.p.rapidapi.com";
-const BASE = `https://${RAPIDAPI_HOST}`;
+const BASE = "https://api.scraper.tech";
 const RATE_DELAY_MS = 500;
 
 function getKey(): string {
-  if (process.env.RAPIDAPI_KEY) return process.env.RAPIDAPI_KEY;
+  if (process.env.SCRAPER_KEY) return process.env.SCRAPER_KEY;
 
   // Try global.env
   try {
@@ -18,12 +17,12 @@ function getKey(): string {
       `${process.env.HOME}/.config/env/global.env`,
       "utf-8"
     );
-    const match = envFile.match(/RAPIDAPI_KEY=["']?([^"'\n]+)/);
+    const match = envFile.match(/SCRAPER_KEY=["']?([^"'\n]+)/);
     if (match) return match[1];
   } catch {}
 
   throw new Error(
-    "RAPIDAPI_KEY not found in env or ~/.config/env/global.env"
+    "SCRAPER_KEY not found in env or ~/.config/env/global.env"
   );
 }
 
@@ -57,8 +56,7 @@ async function rapidGet(url: string): Promise<any> {
   const key = getKey();
   const res = await fetch(url, {
     headers: {
-      "x-rapidapi-host": RAPIDAPI_HOST,
-      "x-rapidapi-key": key,
+      "scraper-key": key,
     },
   });
 
